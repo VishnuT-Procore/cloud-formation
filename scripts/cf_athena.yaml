@@ -1,0 +1,50 @@
+# Athena helps to query on S3 objects. 
+# There are two components 
+#       a. Crawler, this reads the target files and builds schema on AWS Glue.  
+#       b. Database, location to have tables are available. 
+# Refer: 
+
+AWSTemplateFormatVersion: 2010-09-09
+Parameters:
+  Env:
+    Description: Environment (AWS Account) where this stack is being built
+    Type: String
+    Default: nonprod
+    AllowedValues:     
+      - nonprod
+      - prod
+  Region:
+    Description: Region (AWS Region) where this stack is being built
+    Type: String
+    Default: us-east-1
+    AllowedValues:
+      - us-east-1
+      - us-west-1
+	  
+# This Section would allow to inherit common values from parent.
+# e.g: Tags for AWS resources or Subnets or VPN details
+'Fn::Transform':
+  Name: 'AWS::Include'
+  Parameters:
+    Location: <S3 url>
+Resources:
+  MyTestDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: "my_test_db"
+        Description: "Schema for all files on s3 Zone "
+  EdwinCuratedCrawler:
+    Type: AWS::Glue::Crawler
+    Properties:
+      Name: "MyTestDatabaseCrawler"
+      Role: 'arn:aws:iam:::role/MyAwsGlueRole'
+      DatabaseName: !Ref MyTestDatabase
+      Targets:
+        S3Targets:
+         - Path:
+             !Join  
+               - '/'
+               - - 'wps-test-dev'
+                 - 'MyBucket'
