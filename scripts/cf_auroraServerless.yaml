@@ -1,0 +1,104 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: >
+  A basic CloudFormation template for an RDS Aurora cluster serverless.
+########################### Parameters here #################################################################  
+Parameters: 
+ Env:
+    Description: Environment (AWS Account) where this stack is being built
+    Type: String
+    Default: nonprod
+    AllowedValues:     
+      - nonprod
+      - prod
+ LogicalEnv:
+    Description: Environment (AWS Account) where this stack is being built
+    Type: String
+    Default: dev
+    AllowedValues:     
+      - dev
+      - qa
+      - preprod
+      - prod
+ Region:
+    Description: Region (AWS Region) where this stack is being built
+    Type: String
+    Default: us-east-1
+    AllowedValues:
+      - us-east-1
+      - us-west-1
+ EncryptionKeyArn: 
+    Default: KMS Key ARN
+    Description: "This is ARN for KMS key."
+    Type: String
+########################### Conditions here #################################################################	   
+Conditions:
+    ConfigureRoute53: !Equals [ !Ref ConfigureDns, 'true' ]
+    
+########################### Mappings here #################################################################	
+'Fn::Transform':
+  Name: 'AWS::Include'
+  Parameters:
+    Location: S3 Location
+########################### Resources here #################################################################
+Resources: 
+  DatabaseSecurityGroup: 
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupName: Team-serverless-sg
+      GroupDescription: "This group was created using CloudFormation"
+      VpcId:
+        Fn::FindInMap: [Vpcs, !Ref Env, vpcid]
+      SecurityGroupIngress: 
+        IpProtocol: "tcp"
+        FromPort: 3306
+        ToPort: 3306
+        CidrIp: 10.0.0.0/8
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: CloudFormation managed DB subnet group.
+      SubnetIds:
+        - Fn::FindInMap: [DataSubnets, !Ref Env, AZ1]
+        - Fn::FindInMap: [DataSubnets, !Ref Env, AZ2]
+        - Fn::FindInMap: [DataSubnets, !Ref Env, AZ3]
+  RDSCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      DBClusterIdentifier: database-serverless-cluster
+      MasterUsername:
+        '{{resolve:secretsmanager:arn:aws:secretsmanager:us-east-1::secret:Secret-Credential-Name:SecretString:username}}'
+      MasterUserPassword:
+        '{{resolve:secretsmanager:arn:aws:secretsmanager:us-east-1::secret:Secret-Credential-Name:SecretString:password}}'
+      DatabaseName: MyDatabase
+      DeletionProtection: true      
+      Engine: aurora
+      EngineMode: serverless
+      ScalingConfiguration:
+        AutoPause: true
+        MaxCapacity: 128
+        MinCapacity: 16
+        SecondsUntilAutoPause: 300
+      DBSubnetGroupName: !Ref "DatabaseSubnetGroup"
+      VpcSecurityGroupIds: [!Ref DatabaseSecurityGroup]
+      DBClusterParameterGroupName: !Ref RDSDBClusterParameterGroup
+      KmsKeyId: !Ref EncryptionKeyArn
+      StorageEncrypted: true
+  RecordSet:
+    Condition: ConfigureRoute53
+    Type: AWS::Route53::RecordSet
+    DependsOn: RDSCluster
+    Properties:
+      HostedZoneId:
+        Fn::FindInMap: [Route53Zone, !Ref Env, zoneid]
+      Name:
+        !Join
+          - ''
+          - - 'My-Database'
+            - '-'
+            - !Ref LogicalEnv
+            - '.'
+            - Fn::FindInMap: [Route53Name, !Ref Env, zonename]
+      Type: CNAME
+      TTL: 300
+      ResourceRecords:
+      - !GetAtt RDSCluster.Endpoint.Address
